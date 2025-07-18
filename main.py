@@ -1,76 +1,65 @@
 import time
 import logging
 import requests
-from bs4 import BeautifulSoup
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 
-# Telegram credentials
-TOKEN = "7604446870:AAHpQRJQfMKCPsCt6CG86hPMZtsh24jevts"
+TELEGRAM_TOKEN = "7604446870:AAHpQRJQfMKCPsCt6CG86hPMZtsh24jevts"
 CHAT_ID = "719052415"
+URLS = [
+    "https://inforadar.live/#/dashboard/soccer/live",
+    "https://inforadar.live/#/dashboard/basketball/live"
+]
+CHECK_INTERVAL = 60
+ALG_THRESHOLD_POS = 1.00
+ALG_THRESHOLD_NEG = -1.00
 
-# URLs to scrape
-URLS = {
-    "soccer": "https://inforadar.live/#/dashboard/soccer/live",
-    "basketball": "https://inforadar.live/#/dashboard/basketball/live"
-}
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
-
-def send_telegram_message(text):
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": message}
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": text}
         requests.post(url, data=data)
     except Exception as e:
-        logging.error(f"Telegram error: {e}")
+        logging.error(f"Telegram Error: {e}")
 
-def scrape_inforadar():
-    results = []
-    for sport, url in URLS.items():
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "html.parser")
-                scripts = soup.find_all("script")
-                for script in scripts:
-                    if "Alg.1" in script.text:
-                        try:
-                            text = script.text
-                            if "Alg.1" in text:
-                                results.append((sport, text))
-                        except:
-                            pass
-            else:
-                logging.warning(f"Failed to load {sport}: {response.status_code}")
-        except Exception as e:
-            logging.error(f"Scrape error ({sport}): {e}")
-    return results
+def start_scraper():
+    options = Options()
+    options.headless = True
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
-def main():
+    driver = uc.Chrome(options=options)
+
     logging.info("Bot started successfully.")
+    send_telegram_message("✅ FotisBot is LIVE on Railway!")
+
     while True:
         try:
-            logging.info("Checking Inforadar data...")
-            data = scrape_inforadar()
+            for url in URLS:
+                driver.get(url)
+                time.sleep(5)
 
-            if not data:
-                logging.info("No data found yet.")
-            else:
-                for sport, raw in data:
-                    lines = raw.splitlines()
-                    for line in lines:
-                        if "Alg.1" in line:
-                            try:
-                                value = float(line.split("Alg.1")[1].split(":")[1].strip().replace(",", "."))
-                                if value > 1.00 or value < -1.00:
-                                    message = f"⚠️ {sport.upper()} ALERT!\nValue: {value}"
-                                    logging.info(message)
-                                    send_telegram_message(message)
-                            except:
-                                continue
+                rows = driver.find_elements(By.CSS_SELECTOR, "tr")
+                for row in rows:
+                    try:
+                        text = row.text
+                        if "Alg.1" in text:
+                            alg_value = float(text.split("Alg.1")[-1].strip())
+                            if alg_value > ALG_THRESHOLD_POS or alg_value < ALG_THRESHOLD_NEG:
+                                match = text.split("\n")[0]
+                                send_telegram_message(f"🔥 ALERT\nMatch: {match}\nAlg.1: {alg_value}\nLink: {url}")
+                                logging.info(f"Alert sent: {match} - {alg_value}")
+                    except:
+                        continue
+
+            time.sleep(CHECK_INTERVAL)
+
         except Exception as e:
-            logging.error(f"Main loop error: {e}")
-
-        time.sleep(60)
+            logging.error(f"Error: {e}")
+            time.sleep(10)
 
 if __name__ == "__main__":
-    main()
+    start_scraper()
